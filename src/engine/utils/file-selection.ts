@@ -1,9 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import {
-  ripgrepGlobMatches,
-  ripgrepGlobMatchesCaseInsensitive,
-} from "./glob.js";
+import { compileRipgrepGlob } from "./glob.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,18 +63,13 @@ export function matchesFileSelection(
   selection: FileSelection,
   types: FileTypePatterns,
 ): boolean {
-  const includedByGlob = matchesOrderedGlobs(path, selection);
-  const includedByType =
-    types.include.length === 0 ||
-    types.include.some((glob) => ripgrepGlobMatches(glob, path));
-  const excludedByType = types.exclude.some((glob) =>
-    ripgrepGlobMatches(glob, path),
-  );
-
-  return includedByGlob && includedByType && !excludedByType;
+  return compileFileSelection(selection, types)(path);
 }
 
-function matchesOrderedGlobs(path: string, selection: FileSelection): boolean {
+export function compileFileSelection(
+  selection: FileSelection,
+  types: FileTypePatterns,
+): (path: string) => boolean {
   const rules = [
     ...(selection.globs ?? []).map((pattern) => ({
       pattern,
@@ -91,23 +83,38 @@ function matchesOrderedGlobs(path: string, selection: FileSelection): boolean {
     .map((rule) => ({ ...rule, pattern: rule.pattern.trim() }))
     .filter((rule) => rule.pattern.length > 0);
   const hasPositiveRule = rules.some((rule) => !rule.pattern.startsWith("!"));
-  let included = !hasPositiveRule;
-
-  for (const rule of rules) {
+  const globMatchers = rules.map((rule) => {
     const negated = rule.pattern.startsWith("!");
     const pattern = negated ? rule.pattern.slice(1).trim() : rule.pattern;
-    if (!pattern) {
-      continue;
-    }
-    const matches = rule.caseInsensitive
-      ? ripgrepGlobMatchesCaseInsensitive(pattern, path)
-      : ripgrepGlobMatches(pattern, path);
-    if (matches) {
-      included = !negated;
-    }
-  }
+    return {
+      negated,
+      matches: compileRipgrepGlob(pattern, rule.caseInsensitive),
+    };
+  });
+  const includedTypes = types.include.map((pattern) =>
+    compileRipgrepGlob(pattern),
+  );
+  const excludedTypes = types.exclude.map((pattern) =>
+    compileRipgrepGlob(pattern),
+  );
 
-  return included;
+  return (path) => {
+    let included = !hasPositiveRule;
+    // The last matching glob wins, including case-insensitive overrides.
+    for (let index = globMatchers.length - 1; index >= 0; index--) {
+      const rule = globMatchers[index];
+      if (rule.matches(path)) {
+        included = !rule.negated;
+        break;
+      }
+    }
+    return (
+      included &&
+      (includedTypes.length === 0 ||
+        includedTypes.some((matches) => matches(path))) &&
+      !excludedTypes.some((matches) => matches(path))
+    );
+  };
 }
 
 function resolveTypeNames(

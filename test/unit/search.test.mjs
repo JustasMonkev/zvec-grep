@@ -299,6 +299,65 @@ test("indexed rg-style globs match nested basenames and honor later overrides", 
   );
 });
 
+test("unfiltered and symbol-only searches do not enumerate workspace files", async () => {
+  const fixture = createFixture();
+  fixture.storage.listFiles = () => {
+    throw new Error("Unfiltered search must not copy every indexed file");
+  };
+  for (const filters of [
+    {},
+    {
+      includePaths: [],
+      excludePaths: [],
+      globs: [],
+      insensitiveGlobs: [],
+      fileTypes: [],
+      excludedFileTypes: [],
+    },
+    { symbolTypes: ["function"] },
+  ]) {
+    const result = await searchWorkspaceIndex(
+      { routes: [{ mode: "fts", query: "symbol" }], ...filters },
+      fixture.context,
+    );
+    assert.deepEqual(
+      result.hits.map((hit) => hit.entity.id),
+      ["entity-a", "entity-b", "entity-c"],
+    );
+  }
+});
+
+test("file filters still enumerate current files and preserve explicit zero timestamps", async () => {
+  const fixture = createFixture();
+  for (const [filters, expected] of [
+    [{ modifiedAfter: 0 }, ["entity-a", "entity-b", "entity-c"]],
+    [{ modifiedBefore: 0 }, []],
+    [{ excludePaths: ["src"] }, ["entity-c"]],
+    [{ includePaths: ["/repo/docs/**"] }, ["entity-c"]],
+    [{ insensitiveGlobs: ["*.TEST.TS"] }, ["entity-b"]],
+    [{ excludedFileTypes: ["ts"] }, []],
+  ]) {
+    const result = await searchWorkspaceIndex(
+      { routes: [{ mode: "fts", query: "symbol" }], ...filters },
+      fixture.context,
+    );
+    assert.deepEqual(
+      result.hits.map((hit) => hit.entity.id),
+      expected,
+    );
+  }
+  const query = {
+    routes: [{ mode: "fts", query: "symbol" }],
+    includePaths: ["docs"],
+  };
+  const before = await searchWorkspaceIndex(query, fixture.context);
+  assert.equal(before.hits.length, 1);
+  fixture.files[2].relativePath = "src/c.ts";
+  fixture.files[2].absolutePath = "/repo/src/c.ts";
+  const after = await searchWorkspaceIndex(query, fixture.context);
+  assert.equal(after.hits.length, 0);
+});
+
 test("entity and file diagnosis handle missing targets and fallback entity selection", async () => {
   const fixture = createFixture();
   await assert.rejects(
