@@ -13,6 +13,9 @@ export function normalizePathPattern(pattern: string): string {
 }
 
 export function normalizePathForMatch(path: string): string {
+  if (!path.includes("\\") && !path.includes("//")) {
+    return path;
+  }
   return path.replaceAll("\\", "/").replace(/\/+/g, "/");
 }
 
@@ -27,73 +30,67 @@ export function hasPathGlob(pattern: string): boolean {
 }
 
 export function pathPatternMatches(pattern: string, path: string): boolean {
-  return pathPatternMatchesWithCase(pattern, path, false);
+  return compilePathPattern(pattern)(path);
 }
 
 export function pathPatternMatchesCaseInsensitive(
   pattern: string,
   path: string,
 ): boolean {
-  return pathPatternMatchesWithCase(pattern, path, true);
+  return compilePathPattern(pattern, true)(path);
 }
 
 export function ripgrepGlobMatches(pattern: string, path: string): boolean {
-  return ripgrepGlobMatchesWithCase(pattern, path, false);
+  return compileRipgrepGlob(pattern)(path);
 }
 
 export function ripgrepGlobMatchesCaseInsensitive(
   pattern: string,
   path: string,
 ): boolean {
-  return ripgrepGlobMatchesWithCase(pattern, path, true);
+  return compileRipgrepGlob(pattern, true)(path);
 }
 
-function ripgrepGlobMatchesWithCase(
+export function compileRipgrepGlob(
   pattern: string,
-  path: string,
-  caseInsensitive: boolean,
-): boolean {
+  caseInsensitive = false,
+): (path: string) => boolean {
   const normalizedPattern = normalizePathPattern(pattern);
   if (normalizedPattern.length === 0) {
-    return false;
+    return () => false;
   }
 
-  return globPatternMatches(
-    normalizedPattern,
-    normalizePathForMatch(path),
-    caseInsensitive,
-  );
+  const matches = compileGlobPattern(normalizedPattern, caseInsensitive);
+  return (path) => matches(normalizePathForMatch(path));
 }
 
-function pathPatternMatchesWithCase(
+export function compilePathPattern(
   pattern: string,
-  path: string,
-  caseInsensitive: boolean,
-): boolean {
+  caseInsensitive = false,
+): (path: string) => boolean {
   const normalizedPattern = normalizePathPattern(pattern);
-  const normalizedPath = normalizePathForMatch(path);
 
   if (normalizedPattern.length === 0) {
-    return false;
+    return () => false;
   }
 
   if (hasPathGlob(normalizedPattern)) {
-    return globPatternMatches(
-      normalizedPattern,
-      normalizedPath,
-      caseInsensitive,
-    );
+    const matches = compileGlobPattern(normalizedPattern, caseInsensitive);
+    return (path) => matches(normalizePathForMatch(path));
   }
 
-  const candidate = caseInsensitive
-    ? normalizedPath.toLowerCase()
-    : normalizedPath;
   const expected = caseInsensitive
     ? normalizedPattern.toLowerCase()
     : normalizedPattern;
   const expectedPrefix = expected.endsWith("/") ? expected : `${expected}/`;
 
-  return candidate === expected || candidate.startsWith(expectedPrefix);
+  return (path) => {
+    const normalizedPath = normalizePathForMatch(path);
+    const candidate = caseInsensitive
+      ? normalizedPath.toLowerCase()
+      : normalizedPath;
+    return candidate === expected || candidate.startsWith(expectedPrefix);
+  };
 }
 
 export function pathPatternMightMatchDescendant(
@@ -119,19 +116,17 @@ export function pathPatternMightMatchDescendant(
   );
 }
 
-function globPatternMatches(
+function compileGlobPattern(
   pattern: string,
-  path: string,
   caseInsensitive: boolean,
-): boolean {
-  if (pattern.endsWith("/**")) {
-    const directoryPattern = pattern.slice(0, -3);
-    if (globToRegExp(directoryPattern, caseInsensitive).test(path)) {
-      return true;
-    }
-  }
-
-  return globToRegExp(pattern, caseInsensitive).test(path);
+): (path: string) => boolean {
+  const directory = pattern.endsWith("/**")
+    ? globToRegExp(pattern.slice(0, -3), caseInsensitive)
+    : undefined;
+  const expression = globToRegExp(pattern, caseInsensitive);
+  return directory
+    ? (path) => directory.test(path) || expression.test(path)
+    : (path) => expression.test(path);
 }
 
 function globToRegExp(pattern: string, caseInsensitive = false): RegExp {

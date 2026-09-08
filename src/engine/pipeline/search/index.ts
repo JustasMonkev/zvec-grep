@@ -25,14 +25,12 @@ import type {
 } from "../../types.js";
 import { TimingCollector } from "../../utils/timing.js";
 import {
-  hasPathGlob,
+  compilePathPattern,
   isAbsolutePathPattern,
-  normalizePathForMatch,
   normalizePathPattern,
-  pathPatternMatches,
 } from "../../utils/glob.js";
 import {
-  matchesFileSelection,
+  compileFileSelection,
   resolveFileTypePatterns,
   type FileTypePatterns,
 } from "../../utils/file-selection.js";
@@ -1038,11 +1036,7 @@ function searchPlanToStorageFilter(
   storage: WorkspaceIndexStorage,
   fileTypePatterns: FileTypePatterns,
 ): StorageSearchFilter | undefined {
-  const fileIds = resolveFilteredFileIds(
-    plan,
-    storage.listFiles(),
-    fileTypePatterns,
-  );
+  const fileIds = resolveFilteredFileIds(plan, storage, fileTypePatterns);
   const symbolTypes =
     plan.symbolTypes && plan.symbolTypes.length > 0
       ? plan.symbolTypes
@@ -1066,7 +1060,7 @@ function filterMatchesNoFiles(
 
 function resolveFilteredFileIds(
   plan: SearchPlan,
-  files: readonly FileInfo[],
+  storage: WorkspaceIndexStorage,
   fileTypePatterns: FileTypePatterns,
 ): string[] | undefined {
   const includeMatchers = (plan.includePaths ?? []).map(compilePathFilter);
@@ -1088,7 +1082,9 @@ function resolveFilteredFileIds(
     return undefined;
   }
 
-  return files
+  const matchesSelection = compileFileSelection(plan, fileTypePatterns);
+  return storage
+    .listFiles()
     .filter((file) => {
       const included =
         includeMatchers.length === 0 ||
@@ -1098,7 +1094,7 @@ function resolveFilteredFileIds(
       return (
         included &&
         !excluded &&
-        matchesFileSelection(file.relativePath, plan, fileTypePatterns) &&
+        matchesSelection(file.relativePath) &&
         matchesModifiedTimeFilter(file, plan)
       );
     })
@@ -1128,16 +1124,8 @@ function compilePathFilter(pattern: string): PathFilterMatcher {
     ? "absolutePath"
     : "relativePath";
 
-  if (hasPathGlob(pattern)) {
-    return (file) =>
-      pathPatternMatches(pattern, normalizePathForMatch(file[pathTarget]));
-  }
-
-  return (file) => {
-    const path = normalizePathForMatch(file[pathTarget]);
-
-    return pathPatternMatches(pattern, path);
-  };
+  const matches = compilePathPattern(pattern);
+  return (file) => matches(file[pathTarget]);
 }
 
 function normalizePathFilterPattern(pattern: string): string {

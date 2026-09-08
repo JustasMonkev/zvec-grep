@@ -25,9 +25,9 @@ import { detectFileType } from "../../../file-type.js";
 import { resolveMaxFileSizeBytes } from "../../../file-size-policy.js";
 import { sha256Text } from "../../../utils/hash.js";
 import {
+  compileFileSelection,
   matchesFileSelection,
   resolveFileTypePatterns,
-  type FileTypePatterns,
 } from "../../../utils/file-selection.js";
 import {
   normalizePathPattern,
@@ -376,7 +376,7 @@ export async function scanDirectoryPath(
       files,
       diagnostics,
       parentRules,
-      fileTypes,
+      compileFileSelection(root, fileTypes),
       new Set([rootRealPath, directoryRealPath]),
       depth,
       options.signal,
@@ -552,7 +552,7 @@ async function scanRootPath(
       ...(root.noIgnore ? [] : DEFAULT_IGNORE_RULES),
       ...(await readConfiguredIgnoreRules(root)),
     ],
-    fileTypes,
+    compileFileSelection(root, fileTypes),
     new Set([rootRealPath]),
     0,
     signal,
@@ -567,7 +567,7 @@ async function walk(
   files: FileInfo[],
   diagnostics: FileScanDiagnostics,
   parentIgnoreRules: readonly IgnoreRule[],
-  fileTypes: FileTypePatterns,
+  matchesSelection: (path: string) => boolean,
   visitedDirectories: Set<string>,
   depth: number,
   signal?: AbortSignal,
@@ -645,7 +645,7 @@ async function walk(
         files,
         diagnostics,
         ignoreRules,
-        fileTypes,
+        matchesSelection,
         visitedDirectories,
         depth + 1,
         signal,
@@ -682,7 +682,7 @@ async function walk(
       continue;
     }
 
-    if (!matchesFileSelection(relativePath, rootPath, fileTypes)) {
+    if (!matchesSelection(relativePath)) {
       continue;
     }
 
